@@ -542,7 +542,7 @@ export default function Page() {
 
   return (
     <CustomErrorBoundary>
-      <Suspense fallback={null}>
+      <Suspense fallback={<div>Loading...</div>}>
         <SearchParamsHandler />
       </Suspense>
       <Suspense fallback={null}>
