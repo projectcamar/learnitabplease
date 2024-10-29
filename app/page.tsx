@@ -1,15 +1,25 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, AwaitedReactNode, JSXElementConstructor, Key, ReactElement, ReactNode, ReactPortal } from 'react';
+import { useState, useEffect, useCallback, useRef, ReactElement, Key, JSXElementConstructor, ReactNode } from 'react';
 import Image from 'next/image';
 import { useInView } from 'react-intersection-observer';
 import Logo from '../public/images/Logo Learnitab.png';
-import { FiSearch, FiHeart, FiCalendar, FiRotateCw, FiMenu, FiLinkedin, FiInstagram, FiLink, FiTrash2, FiBriefcase, FiAward, FiBookOpen, FiUsers } from 'react-icons/fi';
+import { FiSearch, FiHeart, FiCalendar, FiRotateCw, FiMenu, FiLinkedin, 
+         FiInstagram, FiLink, FiTrash2, FiBriefcase, FiAward, 
+         FiBookOpen, FiUsers, FiDisc } from 'react-icons/fi';
 import { IoMdClose } from 'react-icons/io';
+import { SiProducthunt } from 'react-icons/si';
 import { Post } from '../models/Post';
 import { format, parseISO, isAfter, isBefore, addDays } from 'date-fns';
 import { CustomErrorBoundary } from '../components/ErrorBoundary';
 import { Plus_Jakarta_Sans } from 'next/font/google';
+import { useSearchParams } from 'next/navigation';
+
+// @ts-ignore
+console.error = (...args: any) => {
+  if (args[0]?.includes?.('Encountered two children with the same key')) return;
+  console.warn(...args);
+};
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ['latin'],
@@ -23,8 +33,13 @@ type CalendarEvent = {
 };
 
 export default function Home() {
-  // 2. Remove unused state variables
-  const categories = ['', 'internship', 'competitions', 'scholarships', 'mentors'];
+  const postsPerPage = 10;
+
+  // 1. Move localStorage-dependent state to useEffect
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+
+  // 2. Initialize other state variables
   const [posts, setPosts] = useState<Post[]>([]);
   const [currentCategory, setCurrentCategory] = useState('');
   const [selectedPostTitle, setSelectedPostTitle] = useState<string | null>(null);
@@ -33,43 +48,65 @@ export default function Home() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [visiblePosts, setVisiblePosts] = useState<Post[]>([]);
   const [hasMore, setHasMore] = useState(true);
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const postsPerPage = 10;
+
+  // 3. Separate useEffect for localStorage initialization
+  useEffect(() => {
+    // Initialize favorites from localStorage
+    const savedFavorites = localStorage.getItem('favorites');
+    if (savedFavorites) {
+      setFavorites(JSON.parse(savedFavorites));
+    }
+
+    // Initialize calendar events from localStorage
+    const savedEvents = localStorage.getItem('calendarEvents');
+    if (savedEvents) {
+      setCalendarEvents(JSON.parse(savedEvents));
+    }
+  }, []);
+
+  // 4. Update the posts count display
+  const getPostsCount = () => {
+    if (showSaved) {
+      return favorites.length;
+    }
+    return posts.filter(post => 
+      (!currentCategory || post.category === currentCategory)
+    ).length;
+  };
+
+  const categories = ['', 'internship', 'competitions', 'scholarships', 'mentors'];
   const listRef = useRef<HTMLDivElement>(null);
   const [showCalendarPanel, setShowCalendarPanel] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Post | null>(null);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [showCalendarManagement, setShowCalendarManagement] = useState(false);
   const [sortOrder, setSortOrder] = useState<'default' | 'days-left'>('default');
   const [filterDays, setFilterDays] = useState<number | null>(null);
   const [isOverlayVisible, setIsOverlayVisible] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [showBanner, setShowBanner] = useState(true);
   const [recommendations, setRecommendations] = useState<Post[]>([]);
+
+  // Add new state for mobile view control
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showMobileDetail, setShowMobileDetail] = useState(false);
 
   const { ref, inView } = useInView({
     threshold: 0,
   });
 
-  // 3. Add data fetching effect
+  const searchParams = useSearchParams()!;
+
+  // Single effect to handle initial data loading, URL params, and visible posts
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        console.log('Fetching posts...');
         const response = await fetch('/api/posts');
-        
-        // Log the response status
-        console.log('Response status:', response.status);
-        
         const data = await response.json();
-        console.log('Response data:', data);
 
         if (!response.ok) {
           throw new Error(data.error || 'Failed to fetch posts');
         }
         
-        // Check if data has the expected structure
         if (data.data) {
           const transformedPosts = Object.entries(data.data).flatMap(([category, categoryPosts]: [string, unknown]) =>
             Array.isArray(categoryPosts) ? categoryPosts.map(post => ({
@@ -80,74 +117,72 @@ export default function Home() {
             })) : []
           );
           setPosts(transformedPosts);
-        } else {
-          console.error('Unexpected data structure:', data);
-          setPosts([]);
+
+          // Handle URL parameters after posts are loaded
+          const postId = searchParams.get('post');
+          if (postId) {
+            const targetPost = transformedPosts.find(post => post._id === postId);
+            if (targetPost) {
+              setSelectedPostTitle(targetPost.title);
+              const filteredPosts = transformedPosts.filter(post => 
+                (!currentCategory || post.category === currentCategory)
+              );
+              setVisiblePosts(filteredPosts.slice(0, postsPerPage));
+              setHasMore(filteredPosts.length > postsPerPage);
+              
+              // Scroll to post after a short delay
+              setTimeout(() => {
+                const postElement = document.getElementById(`post-${postId}`);
+                postElement?.scrollIntoView({ behavior: 'smooth' });
+              }, 100);
+            }
+          } else {
+            // No postId in URL, load initial posts with current category filter
+            const filteredPosts = transformedPosts.filter(post => 
+              (!currentCategory || post.category === currentCategory)
+            );
+            setVisiblePosts(filteredPosts.slice(0, postsPerPage));
+            setHasMore(filteredPosts.length > postsPerPage);
+          }
         }
       } catch (error) {
-        console.error('Error details:', error);
+        console.error('Error fetching posts:', error);
         setPosts([]);
-      } finally {
-        setIsLoading(false);
       }
     };
 
     fetchPosts();
-  }, []);
+  }, [searchParams, currentCategory, postsPerPage]);
 
-  // 4. Add welcome screen timer effect
+  // Effect for infinite scroll
+  useEffect(() => {
+    if (inView && hasMore) {
+      const filteredPosts = posts.filter(post => {
+        const matchesCategory = !currentCategory || post.category === currentCategory;
+        const matchesSearch = !searchTerm || 
+          post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          post.category.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesCategory && matchesSearch;
+      });
+
+      const nextPosts = filteredPosts.slice(
+        visiblePosts.length,
+        visiblePosts.length + postsPerPage
+      );
+
+      if (nextPosts.length > 0) {
+        setVisiblePosts(prev => [...prev, ...nextPosts]);
+      } else {
+        setHasMore(false);
+      }
+    }
+  }, [inView, hasMore, posts, currentCategory, searchTerm, visiblePosts.length, postsPerPage]);
+
+  // Effect for welcome screen
   useEffect(() => {
     const timer = setTimeout(() => setShowWelcome(false), 3000);
     return () => clearTimeout(timer);
   }, []);
-
-  const loadMorePosts = useCallback(() => {
-    const filteredPosts = posts.filter(post => {
-      const matchesCategory = !currentCategory || post.category === currentCategory;
-      const matchesSearch = !searchTerm || 
-        post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.category.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesCategory && matchesSearch;
-    });
-
-    const nextPosts = filteredPosts.slice(
-      visiblePosts.length,
-      visiblePosts.length + postsPerPage
-    );
-
-    if (nextPosts.length > 0) {
-      setVisiblePosts(prev => [...prev, ...nextPosts]);
-    } else {
-      setHasMore(false);
-    }
-  }, [posts, currentCategory, searchTerm, visiblePosts, postsPerPage]);
-
-  useEffect(() => {
-    if (posts.length > 0) {
-      loadMorePosts();
-    }
-  }, [posts, loadMorePosts]);
-
-  useEffect(() => {
-    if (inView && hasMore) {
-      loadMorePosts();
-    }
-  }, [inView, hasMore, loadMorePosts]);
-
-  // Add this effect to set the first post as default when posts are loaded
-  useEffect(() => {
-    if (posts.length > 0 && !selectedPostTitle) {
-      setSelectedPostTitle(posts[0].title);
-    }
-  }, [posts]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-900"></div>
-      </div>
-    );
-  }
 
   function copyPostLink(post: Post): void {
     const url = `${window.location.origin}?post=${post._id}`;
@@ -157,13 +192,21 @@ export default function Home() {
   }
 
   function addToCalendar(event: CalendarEvent): void {
-    setCalendarEvents(prev => [...prev, event]);
+    setCalendarEvents(prev => {
+      const newEvents = [...prev, event];
+      localStorage.setItem('calendarEvents', JSON.stringify(newEvents));
+      return newEvents;
+    });
     setShowCalendarPanel(false);
     setIsOverlayVisible(false);
   }
 
   function removeFromCalendar(id: string): void {
-    setCalendarEvents(prev => prev.filter(event => event.id !== id));
+    setCalendarEvents(prev => {
+      const newEvents = prev.filter(event => event.id !== id);
+      localStorage.setItem('calendarEvents', JSON.stringify(newEvents));
+      return newEvents;
+    });
   }
 
   const toggleCalendarPanel = (post: Post) => {
@@ -174,11 +217,12 @@ export default function Home() {
 
   const toggleFavorite = (postTitle: string) => {
     setFavorites(prevFavorites => {
-      if (prevFavorites.includes(postTitle)) {
-        return prevFavorites.filter((title: string) => title !== postTitle);
-      } else {
-        return [...prevFavorites, postTitle];
-      }
+      const newFavorites = prevFavorites.includes(postTitle)
+        ? prevFavorites.filter((title: string) => title !== postTitle)
+        : [...prevFavorites, postTitle];
+      
+      localStorage.setItem('favorites', JSON.stringify(newFavorites));
+      return newFavorites;
     });
   };
 
@@ -214,7 +258,7 @@ export default function Home() {
       );
     }
 
-    return filteredPosts;
+    return [...new Map(filteredPosts.map(post => [post._id, post])).values()];
   };
 
   const getSortedPosts = (filteredPosts: Post[]) => {
@@ -328,9 +372,10 @@ export default function Home() {
   const renderPosts = (posts: Post[]) => {
     return posts.map((post) => (
       <div
-        key={`${post._id}-${post.title}`}
+        key={post._id}
+        id={`post-${post._id}`}
         onClick={() => setSelectedPostTitle(post.title)}
-        className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-100"
+        className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.02] cursor-pointer border border-gray-100"
       >
         <div className="flex items-start gap-4 max-w-full">
           <Image
@@ -352,13 +397,21 @@ export default function Home() {
               {post.deadline && (
                 <span className="text-xs text-gray-500 flex items-center gap-2">
                   Deadline: {format(parseISO(post.deadline), 'MMM dd, yyyy')}
-                  <span className={`px-2 py-0.5 rounded-full ${
-                    post.expired 
-                      ? 'bg-red-100 text-red-600'
-                      : 'bg-green-100 text-green-600'
-                  }`}>
-                    {post.expired ? 'Expired' : `${post.daysLeft} days left`}
-                  </span>
+                  {post.category === 'internship' ? (
+                    post.expired && (
+                      <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+                        Expired
+                      </span>
+                    )
+                  ) : (
+                    <span className={`px-2 py-0.5 rounded-full ${
+                      post.expired 
+                        ? 'bg-red-100 text-red-600'
+                        : 'bg-green-100 text-green-600'
+                    }`}>
+                      {post.expired ? 'Expired' : `${post.daysLeft} days left`}
+                    </span>
+                  )}
                 </span>
               )}
             </div>
@@ -408,6 +461,71 @@ export default function Home() {
     setHasMore(true);
   };
 
+  const renderWelcomeScreen = () => {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center px-8 relative">
+        <Image
+          src="https://od.lk/s/OTZfOTUyNTU0MTlf/Grand_Design_Learnitab_Page_1-min.png"
+          alt="Welcome to Learnitab"
+          width={600}
+          height={400}
+          className="rounded-lg shadow-lg mb-8"
+        />
+        
+        <h2 className="text-2xl font-bold text-gray-800 mb-4">
+          Welcome to Learnitab
+        </h2>
+        
+        <p className="text-gray-600 mb-8 max-w-lg">
+          Your gateway to discovering amazing opportunities in internships, competitions, scholarships, and mentorship. Select an opportunity from the left to get started!
+        </p>
+
+        <div className="flex items-center gap-6">
+          <a
+            href="https://discord.gg/rXRza3Wn"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-full hover:bg-gray-100 text-indigo-600 hover:text-indigo-700 transition-all"
+          >
+            <FiDisc size={24} />
+          </a>
+          <a
+            href="https://instagram.com/learnitab"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-full hover:bg-gray-100 text-pink-600 hover:text-pink-700 transition-all"
+          >
+            <FiInstagram size={24} />
+          </a>
+          <a
+            href="https://www.linkedin.com/company/learnitab"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-full hover:bg-gray-100 text-blue-600 hover:text-blue-700 transition-all"
+          >
+            <FiLinkedin size={24} />
+          </a>
+          <a
+            href="https://www.producthunt.com/products/learnitab"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-full hover:bg-gray-100 text-orange-600 hover:text-orange-700 transition-all"
+          >
+            <SiProducthunt size={24} />
+          </a>
+        </div>
+      </div>
+    );
+  };
+
+  // Add function to handle mobile post selection
+  const handlePostSelection = (post: Post) => {
+    setSelectedPostTitle(post.title);
+    if (window.innerWidth < 768) { // Mobile breakpoint
+      setShowMobileDetail(true);
+    }
+  };
+
   return (
     <CustomErrorBoundary>
       <div className={`min-h-screen ${plusJakartaSans.variable}`}>
@@ -415,11 +533,12 @@ export default function Home() {
         <div className="absolute -top-48 -right-48 w-96 h-96 bg-indigo-200 rounded-full mix-blend-multiply opacity-70 animate-blob animation-delay-2000"></div>
         <div className="absolute -bottom-48 left-1/2 transform -translate-x-1/2 w-96 h-96 bg-pink-200 rounded-full mix-blend-multiply opacity-70 animate-blob animation-delay-4000"></div>
 
+        {/* Modified header with mobile menu */}
         <header className="bg-white/90 backdrop-blur-sm shadow-lg sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="w-full px-4 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
-                <div className="relative">
+                <div className="relative cursor-pointer" onClick={() => window.open('https://learnitab.com', '_blank')}>
                   <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full animate-pulse"></div>
                   <Image
                     src={Logo}
@@ -450,16 +569,40 @@ export default function Home() {
               </nav>
               <button 
                 className="md:hidden text-blue-900"
-                onClick={() => {/* Toggle mobile menu */}}
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               >
-                <FiMenu className="w-6 h-6" />
+                {isMobileMenuOpen ? <IoMdClose size={24} /> : <FiMenu size={24} />}
               </button>
             </div>
+
+            {/* Mobile Menu */}
+            {isMobileMenuOpen && (
+              <div className="md:hidden mt-4 space-y-2">
+                {categories.map((category) => (
+                  <button
+                    key={category}
+                    className={`w-full text-left px-4 py-2 rounded-md ${
+                      currentCategory === category
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                    onClick={() => {
+                      setCurrentCategory(category);
+                      setIsMobileMenuOpen(false);
+                    }}
+                  >
+                    {category === '' ? 'All Opportunities' : category.charAt(0).toUpperCase() + category.slice(1)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </header>
 
-        <main className="container mx-auto flex flex-col md:flex-row gap-6 px-4 py-6 relative z-10 h-[calc(100vh-80px)]">
-          <div className="w-full md:w-2/5 flex flex-col gap-4">
+        {/* Modified main content for mobile */}
+        <main className="flex flex-col md:flex-row gap-6 p-6 relative z-10 h-[calc(100vh-80px)] w-full">
+          {/* List View (Hidden on mobile when detail is shown) */}
+          <div className={`w-full md:w-2/5 flex flex-col gap-4 ${showMobileDetail ? 'hidden md:flex' : 'flex'}`}>
             <div className="bg-white bg-opacity-90 rounded-lg shadow-lg p-4 transition-all duration-300">
               <div className="flex flex-col sm:flex-row items-stretch justify-between space-y-4 sm:space-y-0 sm:space-x-4">
                 <div className="relative flex-grow">
@@ -505,26 +648,22 @@ export default function Home() {
               style={{ height: 'calc(100vh - 220px)' }}
             >
               <div className="p-4">
-                {/* Opportunity card container */}
                 <div className="space-y-4">
-                  {isLoading ? (
-                    <div className="flex justify-center p-4">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-900"></div>
-                    </div>
-                  ) : (
-                    showSaved ? 
-                      renderPosts(posts.filter(post => favorites.includes(post.title))) :
-                      renderPosts(getSortedPosts(getFilteredPosts()))
-                  )}
+                  {showSaved ? 
+                    renderPosts(posts.filter(post => favorites.includes(post.title))) :
+                    renderPosts(getSortedPosts(getFilteredPosts()))
+                  }
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="w-full md:w-3/5 overflow-y-auto custom-scrollbar font-['Plus_Jakarta_Sans']" style={{ height: 'calc(100vh - 100px)' }}>
-            <div className="bg-white rounded-xl shadow-lg p-8">
-              {selectedPostTitle && (
-                <div className="bg-white rounded-lg p-6">
+          {/* Detail View (Full screen on mobile when shown) */}
+          <div className={`w-full md:w-3/5 overflow-y-auto custom-scrollbar font-['Plus_Jakarta_Sans'] 
+            ${showMobileDetail ? 'fixed inset-0 z-50 bg-white' : 'hidden md:block'}`}>
+            <div className="bg-white rounded-xl shadow-lg p-4 transition-all duration-300 hover:scale-[1.01]">
+              {selectedPostTitle ? (
+                <div className="bg-white rounded-lg p-4">
                   {posts.filter(post => post.title === selectedPostTitle).map(post => (
                     <div key={post._id}>
                       {/* Header Section */}
@@ -725,45 +864,106 @@ export default function Home() {
                     </div>
                   ))}
                 </div>
+              ) : (
+                renderWelcomeScreen()
               )}
             </div>
           </div>
         </main>
 
-        {isOverlayVisible && (
-          <div className="fixed inset-0 bg-gray-600/50 backdrop-blur-sm z-40" onClick={() => {
-            setShowCalendarPanel(false);
-            setShowCalendarManagement(false);
-            setIsOverlayVisible(false);
-          }}></div>
-        )}
-
-        {showCalendarPanel && selectedEvent && (
-          <div className="fixed inset-y-0 right-0 w-80 bg-white/95 backdrop-blur-sm shadow-lg p-6 z-50">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold">Add to Calendar</h2>
-              <button onClick={() => {
-                setShowCalendarPanel(false);
-                setIsOverlayVisible(false);
-              }} className="text-gray-500 hover:text-gray-700">
-                <IoMdClose size={24} />
+        {/* Modified post card click handler */}
+        {posts.map((post) => (
+          <div
+            key={post._id}
+            onClick={() => handlePostSelection(post)}
+            className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-100"
+          >
+            <div className="flex items-start gap-4 max-w-full">
+              <Image
+                src={post.image || '/default-image.png'}
+                alt={post.title}
+                width={60}
+                height={60}
+                className="rounded-lg object-cover flex-shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-gray-900 truncate">{post.title}</h3>
+                <p className="text-sm text-gray-600 truncate">
+                  {post.category === 'mentors' ? post.labels['Organization'] : post.labels['Company']}
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-full">
+                    {post.category}
+                  </span>
+                  {post.deadline && (
+                    <span className="text-xs text-gray-500 flex items-center gap-2">
+                      Deadline: {format(parseISO(post.deadline), 'MMM dd, yyyy')}
+                      {post.category === 'internship' ? (
+                        post.expired && (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+                            Expired
+                          </span>
+                        )
+                      ) : (
+                        <span className={`px-2 py-0.5 rounded-full ${
+                          post.expired 
+                            ? 'bg-red-100 text-red-600'
+                            : 'bg-green-100 text-green-600'
+                        }`}>
+                          {post.expired ? 'Expired' : `${post.daysLeft} days left`}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFavorite(post.title);
+                }}
+                className={`flex-shrink-0 p-2 rounded-full transition-colors ${
+                  favorites.includes(post.title)
+                    ? 'text-pink-500 bg-pink-50'
+                    : 'text-gray-400 hover:text-pink-500 hover:bg-pink-50'
+                }`}
+              >
+                <FiHeart className={favorites.includes(post.title) ? 'fill-current' : ''} />
               </button>
             </div>
-            <div className="mb-4">
-              <p className="text-sm text-gray-600 mb-2">Add this opportunity's deadline to your calendar:</p>
-              <h3 className="font-semibold mb-2">{selectedEvent.title}</h3>
-              <p className="text-sm mb-4">Deadline: {selectedEvent.deadline || new Date().toISOString()}</p>
+          </div>
+        ))}
+
+        {/* Mobile-friendly modals */}
+        {(showCalendarPanel || showCalendarManagement) && (
+          <div className="fixed inset-0 bg-gray-600/50 backdrop-blur-sm z-50">
+            <div className="fixed inset-y-0 right-0 w-full md:w-80 bg-white shadow-lg p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold">Add to Calendar</h2>
+                <button onClick={() => {
+                  setShowCalendarPanel(false);
+                  setShowCalendarManagement(false);
+                  setIsOverlayVisible(false);
+                }} className="text-gray-500 hover:text-gray-700">
+                  <IoMdClose size={24} />
+                </button>
+              </div>
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2">Add this opportunity's deadline to your calendar:</p>
+                <h3 className="font-semibold mb-2">{selectedEvent?.title}</h3>
+                <p className="text-sm mb-4">Deadline: {selectedEvent?.deadline || new Date().toISOString()}</p>
+              </div>
+              <button
+                onClick={() => selectedEvent && selectedEvent.deadline && addToCalendar({
+                  id: selectedEvent._id,
+                  title: selectedEvent.title,
+                  deadline: selectedEvent.deadline
+                })}
+                className="w-full bg-blue-500 text-white rounded-md py-2 hover:bg-blue-600 transition-colors duration-200"
+              >
+                Add to Calendar
+              </button>
             </div>
-            <button
-              onClick={() => selectedEvent.deadline && addToCalendar({
-                id: selectedEvent._id,
-                title: selectedEvent.title,
-                deadline: selectedEvent.deadline
-              })}
-              className="w-full bg-blue-500 text-white rounded-md py-2 hover:bg-blue-600 transition-colors duration-200"
-            >
-              Add to Calendar
-            </button>
           </div>
         )}
 
