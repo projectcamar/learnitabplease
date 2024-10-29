@@ -46,7 +46,7 @@ function SearchParamsHandler() {
   return null;
 }
 
-export default function Home() {
+export default function Page() {
   const postsPerPage = 10;
 
   // 1. Move localStorage-dependent state to useEffect
