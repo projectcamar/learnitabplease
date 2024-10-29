@@ -6,9 +6,10 @@ export async function GET() {
     const client = await clientPromise;
     const db = client.db('learnitabDatabase');
     const categories = ['internship', 'competitions', 'scholarships', 'volunteers', 'events', 'mentors'];
-    let allData: { [key: string]: any[] } = {};
+    
+    const allData: Record<string, unknown[]> = {};
 
-    for (let category of categories) {
+    for (const category of categories) {
       const collection = db.collection(category);
       const posts = await collection.find({}).toArray();
       allData[category] = posts;
